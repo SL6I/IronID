@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fresh dark palette -->
+    <color name="colorBackground">#0B0F14</color>
+    <color name="colorSurface">#121A24</color>
+    <color name="colorSurfaceAlt">#162332</color>
+    <color name="colorPrimary">#1ED760</color>
+    <color name="colorPrimaryDark">#18B94F</color>
+    <color name="colorOnPrimary">#FFFFFF</color>
+    <color name="colorOnSurface">#E8F0FA</color>
+    <color name="colorOnSurfaceMuted">#A9B7C7</color>
+    <color name="colorOverlay">#55000000</color>
+    <color name="colorHint">#9FB4CC</color>
+    <color name="colorAccent">#5CE1E6</color>
+</resources>
