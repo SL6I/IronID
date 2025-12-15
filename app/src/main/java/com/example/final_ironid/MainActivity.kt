@@ -28,6 +28,8 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.annotation.RawRes
+import com.google.android.material.snackbar.Snackbar
 import com.google.common.util.concurrent.ListenableFuture
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.support.image.TensorImage
@@ -45,6 +47,8 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
 import androidx.exifinterface.media.ExifInterface
 
 class MainActivity : AppCompatActivity() {
@@ -57,6 +61,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resultSheet: MaterialCardView
     private lateinit var resultTitle: TextView
     private lateinit var confidenceChip: TextView
+    private lateinit var videoVariationsScroll: View
+    private lateinit var videoVariationsGroup: ChipGroup
     private lateinit var scanAgainButton: MaterialButton
 
     private var imageCapture: ImageCapture? = null
@@ -115,19 +121,6 @@ class MainActivity : AppCompatActivity() {
         "treadmill" to "Treadmill"
     )
 
-    private val videoMap = mapOf(
-        "Barbell Deadlifts" to R.raw.barbell_deadlifts,
-        "Bench Press" to R.raw.bench_press,
-        "Dumbbell" to R.raw.dumbbell,
-        "Kettlebell" to R.raw.kettlebell,
-        "Leg Press" to R.raw.leg_press,
-        "Punching Bag" to R.raw.punching_bag,
-        "Ab Roller" to R.raw.ab_roller,
-        "Stationary Bicycle" to R.raw.stationary_bicycle,
-        "Step Platform" to R.raw.step_platform,
-        "Treadmill" to R.raw.treadmill
-    )
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -140,6 +133,8 @@ class MainActivity : AppCompatActivity() {
         resultSheet = findViewById(R.id.resultSheet)
         resultTitle = findViewById(R.id.resultTitle)
         confidenceChip = findViewById(R.id.confidenceChip)
+        videoVariationsScroll = findViewById(R.id.videoVariationsScroll)
+        videoVariationsGroup = findViewById(R.id.videoVariationsGroup)
         scanAgainButton = findViewById(R.id.scanAgainButton)
 
         captureButton.setOnClickListener { takePhoto() }
@@ -178,8 +173,7 @@ class MainActivity : AppCompatActivity() {
             if (allPermissionsGranted()) {
                 startCamera()
             } else {
-                Toast.makeText(this, "Camera permission denied", Toast.LENGTH_SHORT).show()
-                finish()
+                showPermissionDeniedUi()
             }
         }
     }
@@ -294,6 +288,20 @@ class MainActivity : AppCompatActivity() {
                 Log.d(TAG, "top1 raw=$rawLabel display=$displayLabel conf=$confidence")
 
                 runOnUiThread {
+                    // PHASE 4: ERROR HANDLING
+                    // Reject low-confidence results to prevent false positives
+                    if (confidence < LOW_CONFIDENCE_THRESHOLD) {
+                        videoView.stopPlayback()
+                        videoView.visibility = View.GONE
+                        resultSheet.visibility = View.GONE
+                        Toast.makeText(
+                            this,
+                            "Confidence too low, please move closer.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@runOnUiThread
+                    }
+
                     if (rawLabel != null) {
                         showPrediction(rawLabel, confidence)
                     } else {
@@ -308,14 +316,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun playVideo(label: String, confidence: Float) {
-        val videoRes = videoMap[label]
-        if (videoRes == null) {
-            Toast.makeText(this, "Video not found for $label", Toast.LENGTH_SHORT).show()
-            showLowConfidence(label, confidence)
-            return
-        }
-        Log.d(TAG, "Prediction: $label ($confidence)")
+    private fun playVideo(@RawRes videoRes: Int, label: String, confidence: Float) {
+        Log.d(TAG, "Prediction: $label ($confidence) -> res=$videoRes")
         resultSheet.visibility = View.VISIBLE
         videoView.visibility = View.VISIBLE
         val videoUri = Uri.parse("android.resource://$packageName/$videoRes")
@@ -342,7 +344,23 @@ class MainActivity : AppCompatActivity() {
         confidenceChip.text = "Confidence: ${(confidence * 100).toInt()}%"
         hintText.text = "Machine detected"
         resultSheet.visibility = View.VISIBLE
-        playVideo(displayLabel, confidence)
+
+        val variations = VideoRepository.getVideos(displayLabel)
+        if (variations.isNullOrEmpty()) {
+            videoVariationsScroll.visibility = View.GONE
+            Toast.makeText(this, "No videos found for $displayLabel", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (variations.size == 1) {
+            videoVariationsScroll.visibility = View.GONE
+            playVideo(variations.first(), displayLabel, confidence)
+        } else {
+            videoVariationsScroll.visibility = View.VISIBLE
+            bindVariationChips(displayLabel, confidence, variations)
+            playVideo(variations.first(), displayLabel, confidence)
+            selectFirstChip()
+        }
     }
 
     private fun showLowConfidence(label: String?, confidence: Float) {
@@ -353,6 +371,7 @@ class MainActivity : AppCompatActivity() {
         resultTitle.text = "Not sure"
         confidenceChip.text = "Confidence: ${(confidence * 100).toInt()}%"
         hintText.text = "Try another angle"
+        videoVariationsScroll.visibility = View.GONE
         Toast.makeText(this, "Not sure: $labelText", Toast.LENGTH_SHORT).show()
     }
 
@@ -361,7 +380,44 @@ class MainActivity : AppCompatActivity() {
         videoView.visibility = View.GONE
         resultSheet.visibility = View.GONE
         hintText.text = "Align machine in frame"
+        videoVariationsScroll.visibility = View.GONE
         captureButton.isEnabled = true
+    }
+
+    private fun bindVariationChips(label: String, confidence: Float, variations: List<Int>) {
+        videoVariationsGroup.removeAllViews()
+        variations.forEachIndexed { index, resId ->
+            val chip = Chip(this).apply {
+                text = "Variation ${index + 1}"
+                isCheckable = true
+                isCheckedIconVisible = false
+                setOnClickListener {
+                    isChecked = true
+                    playVideo(resId, label, confidence)
+                }
+            }
+            videoVariationsGroup.addView(chip)
+        }
+    }
+
+    private fun selectFirstChip() {
+        if (videoVariationsGroup.childCount > 0) {
+            val first = videoVariationsGroup.getChildAt(0)
+            if (first is Chip) {
+                first.isChecked = true
+            }
+        }
+    }
+
+    // PHASE 4: UX Error Handling for missing permissions.
+    private fun showPermissionDeniedUi() {
+        val root = findViewById<View>(android.R.id.content)
+        Snackbar.make(root, "Camera access is needed to identify gym machines.", Snackbar.LENGTH_LONG).show()
+        hintText.text = "Camera access is needed to identify gym machines."
+        hintText.visibility = View.VISIBLE
+        videoView.visibility = View.GONE
+        resultSheet.visibility = View.GONE
+        captureButton.isEnabled = false
     }
 
     // Center-crop to a square, preserving aspect ratio (matches Python ImageOps.fit)
@@ -537,6 +593,7 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "IronID"
         private const val REQUEST_CODE_PERMISSIONS = 10
         private const val MODEL_INPUT_SIZE = 224
+        private const val LOW_CONFIDENCE_THRESHOLD = 0.60f
         private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
     }
 }
@@ -560,4 +617,22 @@ private object PerformanceTracker {
     fun logFailure(e: Exception) {
         Log.e(PERF_TAG, "Inference failed: ${e.message}", e)
     }
+}
+
+private object VideoRepository {
+    // Maps display labels to one or more video resources. Replace resource IDs with your actual files.
+    private val videos: Map<String, List<Int>> = mapOf(
+        "Barbell Deadlifts" to listOf(R.raw.barbell_1, R.raw.barbell_2, R.raw.barbell_3),
+        "Bench Press" to listOf(R.raw.bench_press),
+        "Dumbbell" to listOf(R.raw.dumbell_1, R.raw.dumbell_2, R.raw.dumbell_3),
+        "Kettlebell" to listOf(R.raw.kattle_ball_1, R.raw.kattle_ball_2, R.raw.kattle_ball_3),
+        "Leg Press" to listOf(R.raw.leg_press),
+        "Punching Bag" to listOf(R.raw.punching_bag),
+        "Ab Roller" to listOf(R.raw.roller_abs),
+        "Stationary Bicycle" to listOf(R.raw.statis_bicycle),
+        "Step Platform" to listOf(R.raw.step),
+        "Treadmill" to listOf(R.raw.treadmill)
+    )
+
+    fun getVideos(label: String): List<Int>? = videos[label]
 }
