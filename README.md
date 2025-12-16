@@ -150,6 +150,7 @@ The application is optimized for **smooth, real-time inference** on mobile devic
 
 - **Average inference time:** 30–45 ms  
 - **Test devices:** Standard mid-range Android devices  
+<img width="1505" height="562" alt="Screenshot 2025-12-14 145000" src="https://github.com/user-attachments/assets/85be0d12-3a11-4fec-a9d6-c4f3d8e2f2a4" />
 
 To view live performance logs:
 
